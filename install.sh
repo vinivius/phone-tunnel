@@ -59,8 +59,9 @@ if ((${#missing[@]} || need_t2s)); then
     curl -fsSL -o "$tmp/$zip" "https://github.com/xjasonlyu/tun2socks/releases/download/$T2S_VERSION/$zip"
     echo "${T2S_SHA256[$arch]}  $tmp/$zip" | sha256sum -c --quiet - || { echo "tun2socks checksum MISMATCH, aborting"; exit 1; }
     unzip -q -o "$tmp/$zip" -d "$tmp"
-    T2S_SRC="$tmp/tun2socks-linux-$arch"
-    echo "tun2socks $T2S_VERSION downloaded and verified (sha256 ok)"
+    install -m 755 "$tmp/tun2socks-linux-$arch" /usr/local/bin/tun2socks   # keep it, so a re-run won't download again
+    T2S_SRC=/usr/local/bin/tun2socks
+    echo "tun2socks $T2S_VERSION downloaded, verified (sha256 ok), installed to /usr/local/bin/tun2socks"
   fi
 fi
 
@@ -134,7 +135,7 @@ TUN2SOCKS=/usr/local/bin/tun2socks
 EOF
 chmod 600 "$CONF_DIR/config"
 
-install -m 755 "$T2S_SRC" /usr/local/bin/tun2socks
+[[ "$(realpath "$T2S_SRC")" == /usr/local/bin/tun2socks ]] || install -m 755 "$T2S_SRC" /usr/local/bin/tun2socks
 install -m 755 phone-tunnel /usr/local/sbin/phone-tunnel
 install -m 644 system/phone-tunnel.service /etc/systemd/system/phone-tunnel.service
 install -m 755 system/90-phone-tunnel /etc/NetworkManager/dispatcher.d/90-phone-tunnel
