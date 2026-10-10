@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 # Install phone-tunnel so it starts automatically when you join your phone's hotspot.
-# Run while connected to the phone's hotspot, from a normal terminal:   sudo ./install.sh
+# Run while connected to the phone's hotspot, from a normal terminal:   ./install.sh
+# (it re-runs itself with sudo, keeping SSH_AUTH_SOCK so your ssh-agent key still works)
 # Your normal user must already be able to:  ssh -p 8022 <phone-ip>   (see README)
 set -euo pipefail
 cd "$(dirname "$0")"
 
-[[ $EUID -eq 0 ]] || { echo "run with sudo: sudo ./install.sh"; exit 1; }
-REAL_USER="${SUDO_USER:?run via sudo from your normal user, not as root directly}"
-as_user() { sudo -u "$REAL_USER" -H "$@"; }
+[[ $EUID -eq 0 ]] || exec sudo --preserve-env=SSH_AUTH_SOCK "$0" "$@"
+REAL_USER="${SUDO_USER:?run ./install.sh as your normal user, not as root}"
+# your ssh key may live only in an agent (e.g. GNOME Keyring); plain sudo drops SSH_AUTH_SOCK
+if [[ -z "${SSH_AUTH_SOCK:-}" ]]; then
+  uid="$(id -u "$REAL_USER")"
+  for s in "/run/user/$uid/keyring/ssh" "/run/user/$uid/gcr/ssh" "/run/user/$uid/openssh_agent"; do
+    [[ -S "$s" ]] && { SSH_AUTH_SOCK="$s"; break; }
+  done
+fi
+as_user() { sudo -u "$REAL_USER" -H env ${SSH_AUTH_SOCK:+SSH_AUTH_SOCK="$SSH_AUTH_SOCK"} "$@"; }
 
 CONF_DIR=/etc/phone-tunnel
 PHONE_PORT="${PHONE_PORT:-8022}"

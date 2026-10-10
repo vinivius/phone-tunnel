@@ -137,7 +137,7 @@ Nothing to download by hand. The installer:
 Then, **connected to the phone's hotspot**, in a normal terminal:
 
 ```sh
-sudo ./install.sh
+./install.sh
 ```
 
 The installer will:
@@ -166,7 +166,7 @@ From then on it starts and stops by itself whenever you join or leave the hotspo
 | `sudo phone-tunnel on` | kill switch + tunnel (only works on the trusted hotspot) |
 | `journalctl -u phone-tunnel -f` | logs |
 | `./speedtest.py` / `./speedtest.py --direct <wifi-iface>` | measure through the tunnel / directly (direct needs `off` first) |
-| `sudo ./uninstall.sh` | remove everything, on the laptop and the phone |
+| `./uninstall.sh` | remove everything, on the laptop and the phone |
 
 Settings live in `/etc/phone-tunnel/config` (mode 600). You can set `PHONE=<ip>` there
 to pin the phone's address instead of using the gateway.
