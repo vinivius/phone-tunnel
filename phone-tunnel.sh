@@ -4,7 +4,7 @@
 #   laptop: tun2socks on tun0 + default route via tun0
 # Connections are opened by the phone itself (from inside Termux).
 #
-# Usage: USER_=u0_a123 ./phone-tunnel-udp.sh   # foreground; Ctrl-C tears everything down
+# Usage: USER_=u0_a123 ./phone-tunnel.sh   # foreground; Ctrl-C tears everything down
 set -euo pipefail
 
 PHONE="${PHONE:-$(ip -4 route show default | awk '/default/ {print $3; exit}')}"
