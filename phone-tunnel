@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# phone-tunnel: route all traffic (TCP + UDP + DNS) out through an Android phone running Termux.
+#   phone:  gost Shadowsocks server (AEAD, TCP + UDP), started over a restricted SSH key
+#   laptop: tun2socks on tun0 (unprivileged), default route + DNS via tun0, nftables kill switch
+#
+# Installed to /usr/local/sbin/phone-tunnel by install.sh. Must run as root.
+#   phone-tunnel run              run the tunnel in the foreground (what the systemd service does)
+#   phone-tunnel on               engage kill switch + start the service (if on the trusted hotspot)
+#   phone-tunnel off              stop the service + remove kill switch (direct, unprotected)
+#   phone-tunnel status           show what's going on
+#   phone-tunnel killswitch on|off
+#   phone-tunnel nm-hook IFACE ACTION    called by the NetworkManager dispatcher
+set -euo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin   # dispatcher env is minimal
+
+CONF_DIR="${PT_CONF_DIR:-/etc/phone-tunnel}"
+RUN_DIR=/run/phone-tunnel
+SERVICE=phone-tunnel.service
+NFT_TABLE=phone_tunnel
+TUN=tun0
+TUN_ADDR=198.18.0.1/15
+CIPHER=chacha20-ietf-poly1305
+
+# shellcheck source=/dev/null
+source "$CONF_DIR/config"   # PHONE_USER PHONE_PORT SS_PORT IFACE SSID BSSID NM_UUID RUN_AS DNS TUN2SOCKS
+
+log() { echo "phone-tunnel: $*" >&2; }
+die() { log "$*"; exit 1; }
+[[ $EUID -eq 0 ]] || die "must run as root"
+
+gateway() {  # the phone = hotspot gateway, unless PHONE is pinned in the config
+  if [[ -n "${PHONE:-}" ]]; then echo "$PHONE"; else ip -4 route show default dev "$IFACE" | awk '/^default via/ {print $3; exit}'; fi
+}
+
+phone_ssh() {  # pinned host key + dedicated key that can only run phone-tunnel-ctl
+  ssh -i "$CONF_DIR/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes \
+      -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$CONF_DIR/known_hosts" \
+      -o HostKeyAlias=phone-tunnel -o ConnectTimeout=10 -o ServerAliveInterval=15 \
+      -p "$PHONE_PORT" "$PHONE_USER@$1" "${@:2}"
+}
+
+# Are we on the trusted hotspot? Saved WPA3 profile UUID + SSID + BSSID must all match.
+on_trusted_hotspot() {
+  local uuid link
+  uuid="$(nmcli -t -f UUID,DEVICE connection show --active | awk -F: -v d="$IFACE" '$2==d {print $1; exit}')"
+  link="$(iw dev "$IFACE" link 2>/dev/null)" || return 1
+  [[ "$uuid" == "$NM_UUID" ]] || return 1
+  grep -qiF "Connected to ${BSSID} " <<<"$link" || return 1
+  grep -qxF $'\tSSID: '"$SSID" <<<"$link" || return 1
+}
+
+killswitch_on() {  # only the phone's sshd + Shadowsocks port may leave $IFACE; everything else is rejected
+  local phone="$1"
+  nft -f - <<EOF
+table inet $NFT_TABLE
+delete table inet $NFT_TABLE
+table inet $NFT_TABLE {
+  chain egress {
+    type filter hook output priority 0; policy accept;
+    oifname != "$IFACE" accept
+    udp sport 68 udp dport 67 accept
+    ip daddr $phone tcp dport { $PHONE_PORT, $SS_PORT } accept
+    ip daddr $phone udp dport $SS_PORT accept
+    icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit } accept
+    meta l4proto tcp reject with tcp reset
+    reject with icmpx type admin-prohibited
+  }
+  chain forwarding {
+    type filter hook forward priority 0; policy accept;
+    oifname "$IFACE" reject with icmpx type admin-prohibited
+  }
+}
+EOF
+  log "kill switch on (only $phone:$PHONE_PORT,$SS_PORT allowed on $IFACE)"
+}
+killswitch_off() { nft delete table inet "$NFT_TABLE" 2>/dev/null && log "kill switch off" || true; }
+
+cmd_run() {
+  local phone pass t2s_pid="" v6_prev fails=0
+  phone="$(gateway)"; [[ -n "$phone" ]] || die "no default gateway on $IFACE"
+  pass="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"   # per-session Shadowsocks key
+  mkdir -p "$RUN_DIR"; chmod 755 "$RUN_DIR"
+  v6_prev="$(sysctl -n "net.ipv6.conf.$IFACE.disable_ipv6")"
+
+  cleanup() {
+    set +e
+    [[ -n "$t2s_pid" ]] && kill "$t2s_pid" 2>/dev/null
+    ip link del "$TUN" 2>/dev/null
+    resolvectl default-route "$IFACE" true 2>/dev/null
+    sysctl -q "net.ipv6.conf.$IFACE.disable_ipv6=$v6_prev"
+    phone_ssh "$phone" stop 2>/dev/null
+    rm -f "$RUN_DIR/tun2socks.yaml"
+    log "tunnel down"
+  }
+  trap cleanup EXIT
+  trap 'exit 0' INT TERM
+
+  # 1. Phone: start gost. The key goes over stdin, so it never appears in a command line.
+  printf '%s\n' "$pass" | phone_ssh "$phone" start "$SS_PORT" || die "phone refused start (host key / key / sshd?)"
+  for _ in 1 2 3 4 5; do timeout 2 bash -c "</dev/tcp/$phone/$SS_PORT" 2>/dev/null && break; sleep 1; done
+
+  # 2. Laptop: tun0 owned by the unprivileged $RUN_AS user, which runs tun2socks
+  ip link del "$TUN" 2>/dev/null || true
+  ip tuntap add mode tun dev "$TUN" user "$RUN_AS"
+  ip addr add "$TUN_ADDR" dev "$TUN"   # without an address systemd-resolved gives tun0 no DNS scope
+  ip link set "$TUN" up
+  install -m 600 -o "$RUN_AS" /dev/null "$RUN_DIR/tun2socks.yaml"
+  cat >"$RUN_DIR/tun2socks.yaml" <<EOF
+device: $TUN
+interface: $IFACE
+loglevel: warn
+proxy: ss://$CIPHER:$pass@$phone:$SS_PORT
+EOF
+  runuser -u "$RUN_AS" -- "$TUN2SOCKS" --config "$RUN_DIR/tun2socks.yaml" &
+  t2s_pid=$!
+  sleep 1; kill -0 "$t2s_pid" 2>/dev/null || die "tun2socks exited"
+
+  # 3. Routing + DNS. The hotspot /24 link route stays more specific, so phone traffic goes direct.
+  ip route replace default dev "$TUN" metric 50
+  sysctl -q "net.ipv6.conf.$IFACE.disable_ipv6=1"
+  # shellcheck disable=SC2086
+  resolvectl dns "$TUN" $DNS
+  resolvectl domain "$TUN" '~.'
+  resolvectl default-route "$IFACE" false
+  log "tunnel up via $phone ($CIPHER, TCP+UDP)"
+
+  # 4. Health check: exit non-zero if tun2socks or the phone end dies, so systemd restarts us
+  while kill -0 "$t2s_pid" 2>/dev/null; do
+    sleep 15
+    if timeout 3 bash -c "</dev/tcp/$phone/$SS_PORT" 2>/dev/null; then fails=0
+    else fails=$((fails + 1)); log "phone not answering ($fails/3)"; [[ $fails -ge 3 ]] && exit 1; fi
+  done
+  exit 1
+}
+
+cmd_on() {
+  on_trusted_hotspot || die "not on the trusted hotspot ($SSID / $BSSID / $NM_UUID), refusing"
+  local phone; phone="$(gateway)"
+  killswitch_on "$phone"
+  # gateway changed (new DHCP lease)? restart so tun2socks points at the new address
+  if [[ "$(cat "$RUN_DIR/phone" 2>/dev/null)" != "$phone" ]] && systemctl is-active -q "$SERVICE"; then
+    systemctl restart "$SERVICE"
+  else
+    systemctl start "$SERVICE"
+  fi
+  mkdir -p "$RUN_DIR"; echo "$phone" >"$RUN_DIR/phone"
+}
+
+cmd_off() {
+  systemctl stop "$SERVICE" 2>/dev/null || true
+  killswitch_off
+  rm -f "$RUN_DIR/phone"
+}
+
+cmd_status() {
+  echo "service:     $(systemctl is-active "$SERVICE" 2>/dev/null || true)"
+  echo "kill switch: $(nft list table inet "$NFT_TABLE" >/dev/null 2>&1 && echo on || echo off)"
+  echo "hotspot:     $(on_trusted_hotspot && echo "trusted ($SSID)" || echo "not trusted / not connected")"
+  echo "route:       $(ip route get 1.1.1.1 2>/dev/null | head -1)"
+  local phone; phone="$(gateway)"
+  [[ -n "$phone" ]] && echo "phone gost:  $(phone_ssh "$phone" status 2>&1 || true)"
+}
+
+case "${1:-}" in
+  run)       cmd_run ;;
+  on)        cmd_on ;;
+  off)       cmd_off ;;
+  status)    cmd_status ;;
+  killswitch)
+    case "${2:-}" in
+      on)  killswitch_on "$(gateway)" ;;
+      off) killswitch_off ;;
+      *)   die "usage: phone-tunnel killswitch on|off" ;;
+    esac ;;
+  nm-hook)   # $2=interface $3=action (from NetworkManager dispatcher)
+    [[ "${2:-}" == "$IFACE" ]] || exit 0
+    case "${3:-}" in
+      up|dhcp4-change) on_trusted_hotspot && cmd_on || true ;;
+      down|pre-down)   cmd_off ;;
+    esac ;;
+  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

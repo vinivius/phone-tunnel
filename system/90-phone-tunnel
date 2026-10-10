@@ -1,0 +1,4 @@
+#!/bin/sh
+# NetworkManager dispatcher hook: hand every event to phone-tunnel, which decides
+# (interface + NM profile UUID + SSID + BSSID) whether this is the trusted hotspot.
+exec /usr/local/sbin/phone-tunnel nm-hook "$1" "$2"

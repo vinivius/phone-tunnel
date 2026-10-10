@@ -1,0 +1,4 @@
+{"label": "direct-lat-r1", "time": "2026-10-10 17:45:07Z", "tls_rtt_ms": 422.2, "udp_dns_ms": 70.9, "udp_loss_pct": 0.0}
+{"label": "tunnel-lat-r1", "time": "2026-10-10 17:45:42Z", "tls_rtt_ms": 84.8, "udp_dns_ms": 41.7, "udp_loss_pct": 0.0}
+{"label": "direct-lat-r2", "time": "2026-10-10 17:46:13Z", "tls_rtt_ms": 45.1, "udp_dns_ms": 45.1, "udp_loss_pct": 0.0}
+{"label": "tunnel-lat-r2", "time": "2026-10-10 17:46:23Z", "tls_rtt_ms": 67.6, "udp_dns_ms": 46.1, "udp_loss_pct": 0.0}

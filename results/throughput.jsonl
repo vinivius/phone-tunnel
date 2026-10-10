@@ -1,0 +1,4 @@
+{"label": "direct-r1", "time": "2026-10-10 13:35:23", "tcp_connect_ms": 45.4, "udp_dns_ms": 58.3, "udp_loss_pct": 0.0, "down_mbps": 0.5, "up_mbps": 0.55, "down_samples": [0.5, 0.49, 0.52], "up_samples": [0.57, 0.55, 0.54]}
+{"label": "tunnel-r1", "time": "2026-10-10 17:37:02", "tcp_connect_ms": 5091.5, "udp_dns_ms": 50.2, "udp_loss_pct": 0.0, "down_mbps": 34.02, "up_mbps": 8.25, "down_samples": [34.47, 34.02, 30.07], "up_samples": [18.22, 8.25, 5.33]}
+{"label": "direct-r2", "time": "2026-10-10 13:38:52", "tcp_connect_ms": 29.1, "udp_dns_ms": 46.4, "udp_loss_pct": 0.0, "down_mbps": 0.14, "up_mbps": 0.42, "down_samples": [0.27, 0.06, 0.14], "up_samples": [0.49, 0.31, 0.42]}
+{"label": "tunnel-r2", "time": "2026-10-10 17:40:33", "tcp_connect_ms": 5075.4, "udp_dns_ms": 43.1, "udp_loss_pct": 0.0, "down_mbps": 34.38, "up_mbps": 10.54, "down_samples": [29.96, 34.38, 34.8], "up_samples": [10.54, 11.31, 7.9]}

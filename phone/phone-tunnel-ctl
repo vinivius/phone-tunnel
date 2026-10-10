@@ -1,0 +1,35 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# Forced command for the laptop's phone-tunnel SSH key (see authorized_keys "restrict,command=...").
+# Whatever the client asks for, this is the only thing that key can run:
+#   start PORT   (Shadowsocks key read from stdin)  -> start gost
+#   stop                                             -> stop gost
+#   status                                           -> is gost running?
+set -eu
+D="$PREFIX/var/phone-tunnel"; mkdir -p "$D"
+CIPHER=chacha20-ietf-poly1305
+# shellcheck disable=SC2086
+set -- ${SSH_ORIGINAL_COMMAND:-}
+
+running() { [ -f "$D/gost.pid" ] && kill -0 "$(cat "$D/gost.pid")" 2>/dev/null; }
+stop() { running && kill "$(cat "$D/gost.pid")" 2>/dev/null; rm -f "$D/gost.pid"; }
+
+case "${1:-}" in
+  start)
+    port="${2:-}"
+    case "$port" in ''|*[!0-9]*) echo "bad port" >&2; exit 2 ;; esac
+    IFS= read -r key
+    case "$key" in ''|*[!0-9a-f]*) echo "bad key" >&2; exit 2 ;; esac
+    stop
+    termux-wake-lock
+    nohup gost -L "ss://$CIPHER:$key@0.0.0.0:$port" -L "ssu://$CIPHER:$key@0.0.0.0:$port" \
+      >"$D/gost.log" 2>&1 </dev/null &
+    echo $! >"$D/gost.pid"
+    sleep 1; running || { echo "gost failed to start" >&2; cat "$D/gost.log" >&2; exit 1; }
+    echo "started on :$port" ;;
+  stop)
+    stop; termux-wake-unlock; echo stopped ;;
+  status)
+    if running; then echo "running (pid $(cat "$D/gost.pid"))"; else echo stopped; exit 1; fi ;;
+  *)
+    echo "denied" >&2; exit 1 ;;
+esac

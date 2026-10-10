@@ -1,0 +1,11 @@
+[Unit]
+Description=Route all traffic through the phone hotspot (phone-tunnel)
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/phone-tunnel run
+Restart=on-failure
+RestartSec=5
+# no [Install]: started/stopped by the NetworkManager dispatcher hook, never at boot
