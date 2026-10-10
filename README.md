@@ -197,6 +197,9 @@ tun2socks 2.7.0). Medians, two alternating rounds:
 | **tunnel** (laptop → phone-tunnel) | **34.0–34.4 Mbit/s** | **8.3–10.5 Mbit/s** | 68 ms | 0 % |
 | on the phone itself (reference) | 119 Mbit/s | — | — | — |
 
+**Cost on the laptop:** nothing at all when you're not on the hotspot (no daemon, no polling).
+On it: ~50 MB of RAM and ~1 % of one CPU core.
+
 Results depend entirely on your carrier and plan. See **[TESTING.md](TESTING.md)** for the
 method, raw samples, caveats, and all the functional and security tests (restricted key,
 host-key pinning, kill switch, leak tests, hotspot matching, installer checksum checks).

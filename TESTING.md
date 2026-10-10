@@ -136,6 +136,33 @@ All run against the real phone over the real hotspot.
 | nothing missing | ✅ no prompt |
 | phone setup (`setup-phone.sh`) against the real phone, run twice | ✅ idempotent: one key line, restricted |
 
+### Real install on the host (Ubuntu 24.04)
+
+`./install.sh` was run on the laptop itself, not in a container:
+
+| Check | Result |
+|---|---|
+| installer lists missing tun2socks, asks, downloads, verifies the checksum | ✅ |
+| service active, 0 restarts; files in `/etc` and `/usr/local` identical to the repo | ✅ |
+| default route + DNS via `tun0`; IPv6 off on Wi-Fi | ✅ |
+| HTTPS through the tunnel | ✅ |
+| kill switch: forced direct connection over Wi-Fi | ✅ blocked |
+| service not enabled at boot (`static`, started only by the NetworkManager hook) | ✅ |
+
+## Resource cost
+
+Measured on the installed version:
+
+| | Not on the hotspot | On the trusted hotspot |
+|---|---|---|
+| processes | **none** (no daemon, no timer, no polling) | `tun2socks` + a small bash supervisor |
+| memory | 0 | ~43 MB (tun2socks) + ~4 MB (bash) |
+| CPU | 0. The NetworkManager hook runs for a few ms per network event and exits | ~0.7 % of one core with background traffic, ~1.2 % while downloading |
+| health check | — | one TCP connection to the phone every 15 s |
+
+On the phone, the main cost is battery: gost runs, and a wake lock keeps the CPU awake
+while the tunnel is up.
+
 ## Bugs found during testing (all fixed)
 
 1. `pkill -f` inside `ssh "…"` killed its own shell before gost started.
@@ -146,3 +173,10 @@ All run against the real phone over the real hotspot.
 6. The BSSID check was a prefix match.
 7. TCP connect time is meaningless through tun2socks, so latency is now measured with the
    TLS handshake.
+8. On the real install, `sudo` dropped `SSH_AUTH_SOCK`, so a phone key kept only in an ssh-agent
+   (GNOME Keyring) wasn't available. `./install.sh` now re-runs itself with
+   `sudo --preserve-env=SSH_AUTH_SOCK`, and if started with plain `sudo` it looks for the agent
+   socket in the usual places.
+9. A run that stopped early threw away the downloaded tun2socks, and a re-run after a
+   successful install would have copied `/usr/local/bin/tun2socks` onto itself. The verified
+   binary is now installed right away, and the copy is skipped.
