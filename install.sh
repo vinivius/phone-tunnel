@@ -116,6 +116,12 @@ echo
 confirm "Proceed?" || { echo "Aborted. Nothing else was changed."; exit 1; }
 
 # --- 3. Files, user, key ----------------------------------------------------------------------
+# re-install over a running tunnel: stop it first, so the new version is what starts below
+# (the kill switch stays on meanwhile, so nothing leaks)
+if systemctl is-active -q phone-tunnel.service 2>/dev/null; then
+  echo "stopping the running tunnel to upgrade it..."
+  systemctl stop phone-tunnel.service
+fi
 id "$RUN_AS" >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin "$RUN_AS"
 install -d -m 700 "$CONF_DIR"
 [[ -f "$CONF_DIR/id_ed25519" ]] || ssh-keygen -q -t ed25519 -N '' -C phone-tunnel -f "$CONF_DIR/id_ed25519"
