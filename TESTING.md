@@ -149,6 +149,36 @@ All run against the real phone over the real hotspot.
 | kill switch: forced direct connection over Wi-Fi | ✅ blocked |
 | service not enabled at boot (`static`, started only by the NetworkManager hook) | ✅ |
 
+### Portable client (`portable/phone-tunnel.sh`, sing-box 1.14.3)
+
+Run against the real phone over home Wi-Fi (the phone side doesn't care which network it's on):
+
+| Test | Result |
+|---|---|
+| generated `proxy` and `tun` configs pass `sing-box check` (real sing-box 1.14.3) | ✅ |
+| `setup` against the real phone: host key cross-checked, key restricted, prompt honoured | ✅ |
+| `setup` on a second computer keeps the first computer's key (one key line per computer) | ✅ |
+| **proxy** (Docker, bridged like Docker Desktop on a Mac): SOCKS5 + HTTP through the phone | ✅ exit IP = phone's network |
+| proxy published on `127.0.0.1` only, not reachable from the LAN | ✅ |
+| proxy with `PT_DOCKER_NET=host`: **UDP through SOCKS5** (DNS to 9.9.9.9) | ✅ |
+| stop: gost on the phone stopped, no container left behind | ✅ |
+| **tun** (real sing-box TUN, isolated network namespace): HTTPS through the phone | ✅ |
+| tun: system DNS intercepted and answered through the tunnel | ✅ |
+| tun: UDP DNS straight to 9.9.9.9 goes through the tunnel | ✅ |
+| tun: IPv6 destination captured by the tunnel, not sent direct | ✅ (the phone had no IPv6 on that network, so the connection was then refused) |
+
+### Phone watchdog (real phone, 5 minutes)
+
+| Instance | Result |
+|---|---|
+| watchdog on, **no heartbeat** | ✅ stopped itself at ~3 min, released its share of the wake lock |
+| watchdog on, heartbeat every 60 s | ✅ still running at 5 min |
+| started without watchdog (older clients) | ✅ still running at 5 min (backward compatible) |
+
+Not tested on a real Mac: the macOS-only paths are default-gateway detection
+(`route -n get default`), `shasum` and the darwin sing-box download. The script is written
+for macOS's bash 3.2 (no associative arrays, no `mapfile`, empty-array-safe expansions).
+
 ## Resource cost
 
 Measured on the installed version:
@@ -180,3 +210,15 @@ while the tunnel is up.
 9. A run that stopped early threw away the downloaded tun2socks, and a re-run after a
    successful install would have copied `/usr/local/bin/tun2socks` onto itself. The verified
    binary is now installed right away, and the copy is skipped.
+10. Our TUN device was called `tun0`, the name OpenVPN-based VPNs use (Proton VPN was using
+    it on the test laptop). Joining the hotspot would have deleted the other VPN's interface.
+    Renamed to `phonetun0`.
+11. `ssh` reads stdin unless given `-n`, so a one-shot `ssh … whoami` swallowed the answer
+    meant for the next `[y/N]` prompt.
+12. A second computer's setup replaced the first computer's key, and a single gost meant one
+    computer's `start` killed the other's tunnel. Now there's one key line and one gost
+    instance (port) per computer.
+13. Leaving the hotspot (walking away, hotspot off) left gost running on the phone with the
+    wake lock held, because the computer could no longer reach it to stop it. Now clients
+    start gost with a watchdog and check in every 60 s; after 3 minutes of silence gost
+    stops itself.

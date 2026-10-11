@@ -21,6 +21,21 @@ is your hotspot and your phone before sending any traffic, and if the tunnel goe
 
 **Tested with:** Ubuntu 24.04 LTS (laptop) + Samsung Galaxy Z Fold 6 (Android 16, Termux, gost 2.12).
 
+### Two clients, same phone side
+
+| | **Linux installer** (`install.sh`) | **Portable client** (`portable/phone-tunnel.sh`) |
+|---|---|---|
+| Platforms | Linux (NetworkManager + systemd) | **macOS + Linux** |
+| Starts | automatically on your hotspot | by hand (`proxy` or `tun`, Ctrl-C to stop) |
+| Covers | whole device: TCP + UDP + DNS | `tun`: whole device (TCP + UDP + DNS, IPv4 + IPv6) · `proxy`: apps using the system proxy |
+| Kill switch | ✅ nftables, fail-closed | `tun`: strict routing while running; nothing once stopped · `proxy`: ❌ |
+| Install | `./install.sh` (sudo) | nothing for `proxy` (just Docker) · `tun` downloads sing-box (pinned + checksummed) |
+| Engine | tun2socks | [sing-box](https://github.com/SagerNet/sing-box) |
+
+Both use the same phone side: gost (Shadowsocks AEAD) started over a restricted SSH key with
+a pinned host key. Each computer gets its own key and its own port, so several computers can
+use the phone at the same time. See [macOS & Linux portable client](#macos--linux-portable-client).
+
 ---
 
 ## How it works
@@ -28,9 +43,9 @@ is your hotspot and your phone before sending any traffic, and if the tunnel goe
 ```
                  laptop                                               phone (Termux, no root)
  ┌────────────────────────────────────────────────┐                 ┌──────────────────────────┐
- │ apps ─► default route ─► tun0 ─► tun2socks ────┼── Shadowsocks ──┼─► gost ─► mobile data ─► internet
+ │ apps ─► default route ─► phonetun0 ─► tun2socks ────┼── Shadowsocks ──┼─► gost ─► mobile data ─► internet
  │                    (198.18.0.1)  (unprivileged)│  AEAD, TCP+UDP  │   (started over SSH)     │
- │ DNS (systemd-resolved) ─► tun0                 │    over Wi-Fi   │                          │
+ │ DNS (systemd-resolved) ─► phonetun0                 │    over Wi-Fi   │                          │
  │ nftables kill switch on Wi-Fi: only phone:ssh  │                 │                          │
  │   and phone:shadowsocks may leave              │                 │                          │
  └────────────────────────────────────────────────┘                 └──────────────────────────┘
@@ -51,10 +66,10 @@ is your hotspot and your phone before sending any traffic, and if the tunnel goe
      **pinned host key**, and asks it to start `gost` as a **Shadowsocks** server
      (`chacha20-ietf-poly1305`, TCP + UDP). The key is random for each session and is sent
      over SSH's stdin, so it never appears in a command line;
-   - creates `tun0` and runs `tun2socks` on it **as an unprivileged system user**
+   - creates `phonetun0` and runs `tun2socks` on it **as an unprivileged system user**
      (`phonetun`). Its config, including the key, is in a mode-600 file, not on the
      command line;
-   - points the default route and all DNS (systemd-resolved, `~.`) at `tun0` and turns
+   - points the default route and all DNS (systemd-resolved, `~.`) at `phonetun0` and turns
      IPv6 off on the Wi-Fi interface (only IPv4 is tunneled);
    - checks every 15 s that the phone is still answering. If tun2socks or the phone side
      dies, the service exits and systemd restarts it. The kill switch stays on the whole
@@ -87,7 +102,7 @@ is your hotspot and your phone before sending any traffic, and if the tunnel goe
 | **Restricted SSH key** (`restrict,command="phone-tunnel-ctl"`) | a stolen laptop key being used to get a shell on the phone | the key can only start, stop or check gost. No shell, no port forwarding, no agent; all arguments are validated |
 | **Shadowsocks AEAD** (per-session random key) | others on the hotspot reading or injecting tunnel traffic | encrypted and authenticated TCP + UDP |
 | **Kill switch** (nftables) | leaks while the tunnel is starting, restarting or broken | only the phone's ssh + Shadowsocks ports (and DHCP) may leave the Wi-Fi interface |
-| Unprivileged `tun2socks` (`phonetun` user) | a bug in the packet-processing code becoming root | it only gets the `tun0` it owns |
+| Unprivileged `tun2socks` (`phonetun` user) | a bug in the packet-processing code becoming root | it only gets the `phonetun0` it owns |
 
 The installer **refuses** to continue if the scanned host key doesn't match the
 fingerprint the phone reports about itself over your existing SSH session. It also checks
@@ -175,6 +190,7 @@ to pin the phone's address instead of using the gateway.
 
 | Path in repo | Installed to | Role |
 |---|---|---|
+| `portable/phone-tunnel.sh` | (run in place) | macOS + Linux client: `setup`, `proxy` (Docker), `tun` (sing-box) |
 | `phone-tunnel` | `/usr/local/sbin/phone-tunnel` | the tunnel, kill switch, trust check, on/off/status |
 | `system/phone-tunnel.service` | `/etc/systemd/system/` | runs `phone-tunnel run`, restarts on failure, never at boot |
 | `system/90-phone-tunnel` | `/etc/NetworkManager/dispatcher.d/` | calls `phone-tunnel nm-hook` on every network event |
@@ -206,14 +222,74 @@ host-key pinning, kill switch, leak tests, hotspot matching, installer checksum 
 
 ---
 
+## macOS & Linux portable client
+
+`portable/phone-tunnel.sh` runs on **macOS** (it's written for macOS's bash 3.2) and **Linux**.
+It needs only the OpenSSH client, which both systems include, plus either Docker or sing-box.
+
+```sh
+cd portable
+./phone-tunnel.sh setup     # once, while on the hotspot. No sudo. Lists what it will change, asks first.
+./phone-tunnel.sh proxy     # Docker mode
+./phone-tunnel.sh tun       # whole-device mode (asks for your password)
+```
+
+**`setup`** works like the Linux installer's phone step:
+- creates a tunnel key in `~/.config/phone-tunnel/`;
+- pins the phone's host key, checking the scanned key against what the phone reports about
+  itself over your normal SSH, and aborts on mismatch;
+- installs gost and `phone-tunnel-ctl` on the phone and authorizes the key as restricted;
+- checks that the key really is restricted.
+
+It uses Shadowsocks port **8389**; the Linux installer uses 8388. Give each extra computer its
+own: `SS_PORT=8390 ./phone-tunnel.sh setup`.
+
+**`proxy`, Docker mode: nothing to install except Docker.**
+- Starts gost on the phone with a fresh per-session key.
+- Runs the **official sing-box image**, pinned by digest, with a SOCKS5 + HTTP proxy on
+  `127.0.0.1:1080`. It's only reachable from the computer itself, never from the LAN.
+- Set it as your **system proxy**:
+  - **macOS:** *System Settings → Network → Wi-Fi → Details → Proxies* → SOCKS proxy
+    `127.0.0.1:1080`.
+  - **Linux:** your desktop's network proxy settings.
+
+  Apps that follow the system proxy (browsers, most apps) go through the phone; apps that
+  ignore it don't.
+- **UDP:** browsers fall back from QUIC to TCP, so web browsing works. UDP through SOCKS5
+  itself only works with `PT_DOCKER_NET=host` (Linux), because Docker's published port
+  doesn't carry the SOCKS5 UDP relay.
+
+**`tun`, native mode: the whole device.**
+- Runs sing-box natively with a TUN interface and `auto_route` + `strict_route`.
+- **All** TCP, UDP and DNS goes through the phone, including IPv6, which is captured rather
+  than left to leak.
+- The system DNS is intercepted and answered through the tunnel. LAN addresses go direct.
+- If sing-box isn't installed, it offers to download **sing-box 1.14.3** for your OS/CPU
+  (macOS or Linux, Intel or ARM), checked against a **pinned SHA-256**, into
+  `~/.config/phone-tunnel/bin/`.
+- Every generated config is checked with `sing-box check` before it runs.
+
+**Both modes:**
+- Ctrl-C stops everything, including gost on the phone.
+- A heartbeat every 60 s keeps the phone side alive. If the computer vanishes, for example
+  by walking out of hotspot range, gost on the phone stops itself after 3 minutes.
+
+**Limits compared with the Linux installer:**
+- it doesn't start automatically;
+- there's no kill switch once it's stopped;
+- in `proxy` mode, apps that ignore the system proxy go direct.
+
+**Don't run another VPN at the same time** (Proton, WireGuard…). Both would try to own the
+default route.
+
 ## Troubleshooting / lessons learned
 
 | Symptom | Cause | Fix (already in the scripts) |
 |---|---|---|
 | gost never starts | `pkill -f 'gost …'` inside `ssh "…"` matches the remote shell's **own** command line and kills it first | track gost with a pidfile |
 | tun2socks prints its usage text and exits | it uses GNU-style flags: `-device` is parsed as `-d evice` | use a YAML `--config` file (also keeps the key out of `ps`) |
-| Tunnel is up but "no internet" | `tun0` had no IP address, so systemd-resolved gave it no DNS scope and nothing resolved | give `tun0` an address (`198.18.0.1/15`, a range reserved for testing) |
-| Re-running scripts while a tunnel is up picks `tun0` as "the phone" | `default dev tun0` has no gateway | only consider `default via …` routes |
+| Tunnel is up but "no internet" | `phonetun0` had no IP address, so systemd-resolved gave it no DNS scope and nothing resolved | give `phonetun0` an address (`198.18.0.1/15`, a range reserved for testing) |
+| Re-running scripts while a tunnel is up picks `phonetun0` as "the phone" | `default dev phonetun0` has no gateway | only consider `default via …` routes |
 | Kill switch fails to load | `fwd` is a reserved word in nftables | chains are called `egress` / `forwarding` |
 | `sudo: a terminal is required` | the installer was started without a TTY | run it in a normal terminal |
 | Slow, but the phone itself is fast | the Wi-Fi link between laptop and phone (signal, band, power saving) is the bottleneck, not the tunnel | check `iw dev <iface> link`, move closer, use 5 GHz |

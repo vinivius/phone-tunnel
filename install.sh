@@ -73,10 +73,10 @@ SSID="$(sed -n 's/^\tSSID: //p' <<<"$LINK")"
 BSSID="$(awk '/^Connected to/ {print $3}' <<<"$LINK")"
 NM_UUID="$(nmcli -t -f UUID,DEVICE connection show --active | awk -F: -v d="$IFACE" '$2==d {print $1; exit}')"
 KEYMGMT="$(nmcli -g 802-11-wireless-security.key-mgmt connection show "$NM_UUID")"
-PHONE_USER="$(as_user ssh -p "$PHONE_PORT" -o ConnectTimeout=10 -o BatchMode=yes "$PHONE" whoami)" \
+PHONE_USER="$(as_user ssh -n -p "$PHONE_PORT" -o ConnectTimeout=10 -o BatchMode=yes "$PHONE" whoami)" \
   || { echo "your user can't ssh to $PHONE:$PHONE_PORT without a password; set that up first (README)"; exit 1; }
 PHONE_HAS_GOST=0
-as_user ssh -p "$PHONE_PORT" -o BatchMode=yes "$PHONE" 'command -v gost' >/dev/null 2>&1 && PHONE_HAS_GOST=1
+as_user ssh -n -p "$PHONE_PORT" -o BatchMode=yes "$PHONE" 'command -v gost' >/dev/null 2>&1 && PHONE_HAS_GOST=1
 
 cat <<EOF
 
@@ -94,7 +94,7 @@ SCAN="$(ssh-keyscan -t ed25519 -p "$PHONE_PORT" "$PHONE" 2>/dev/null | awk '$2==
 [[ -n "$SCAN" ]] || { echo "could not read the phone's ed25519 host key"; exit 1; }
 FP_SCAN="$(ssh-keygen -lf - <<<"$SCAN" | awk '{print $2}')"
 # ask the phone itself (over your already-trusted ssh session) for its fingerprint
-FP_PHONE="$(as_user ssh -p "$PHONE_PORT" -o BatchMode=yes "$PHONE" \
+FP_PHONE="$(as_user ssh -n -p "$PHONE_PORT" -o BatchMode=yes "$PHONE" \
   'ssh-keygen -lf $PREFIX/etc/ssh/ssh_host_ed25519_key.pub' | awk '{print $2}')"
 echo "    host key    $FP_SCAN"
 [[ "$FP_SCAN" == "$FP_PHONE" ]] || { echo "host key mismatch (scan $FP_SCAN vs phone $FP_PHONE): aborting"; exit 1; }

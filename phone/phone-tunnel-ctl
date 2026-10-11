@@ -1,35 +1,65 @@
 #!/data/data/com.termux/files/usr/bin/sh
-# Forced command for the laptop's phone-tunnel SSH key (see authorized_keys "restrict,command=...").
-# Whatever the client asks for, this is the only thing that key can run:
-#   start PORT   (Shadowsocks key read from stdin)  -> start gost
-#   stop                                             -> stop gost
-#   status                                           -> is gost running?
+# Forced command for the computers' phone-tunnel SSH keys (see authorized_keys "restrict,command=...").
+# Whatever the client asks for, this is the only thing those keys can run:
+#   start PORT [watchdog]  (Shadowsocks key read from stdin) -> start a gost instance on PORT
+#   stop [PORT]                                       -> stop that instance (no PORT: stop all)
+#   status [PORT]                                     -> is it running? (no PORT: any instance)
+# watchdog: the client must call "status PORT" at least every 3 minutes, or the instance stops
+# itself (and releases the wake lock). Covers the computer leaving the hotspot without saying bye.
+# One gost instance per port, so several computers can use the phone at the same time
+# without stopping each other.
 set -eu
 D="$PREFIX/var/phone-tunnel"; mkdir -p "$D"
 CIPHER=chacha20-ietf-poly1305
 # shellcheck disable=SC2086
 set -- ${SSH_ORIGINAL_COMMAND:-}
 
-running() { [ -f "$D/gost.pid" ] && kill -0 "$(cat "$D/gost.pid")" 2>/dev/null; }
-stop() { running && kill "$(cat "$D/gost.pid")" 2>/dev/null; rm -f "$D/gost.pid"; }
+valid_port() { case "$1" in ''|*[!0-9]*) echo "bad port" >&2; exit 2 ;; esac; }
+pidfile() { echo "$D/gost-$1.pid"; }
+running() { [ -f "$(pidfile "$1")" ] && kill -0 "$(cat "$(pidfile "$1")")" 2>/dev/null; }
+stop_one() { if running "$1"; then kill "$(cat "$(pidfile "$1")")" 2>/dev/null || true; fi; rm -f "$(pidfile "$1")" "$D/hb-$1"; }
+ports() { for f in "$D"/gost-*.pid; do [ -e "$f" ] || continue; f="${f##*/gost-}"; echo "${f%.pid}"; done; }
+any_running() {
+  for p in $(ports); do running "$p" && return 0; done
+  [ -f "$D/gost.pid" ] && kill -0 "$(cat "$D/gost.pid")" 2>/dev/null   # pre-multi-port versions
+}
 
 case "${1:-}" in
   start)
-    port="${2:-}"
-    case "$port" in ''|*[!0-9]*) echo "bad port" >&2; exit 2 ;; esac
+    port="${2:-}"; valid_port "$port"
     IFS= read -r key
     case "$key" in ''|*[!0-9a-f]*) echo "bad key" >&2; exit 2 ;; esac
-    stop
+    stop_one "$port"
     termux-wake-lock
     nohup gost -L "ss://$CIPHER:$key@0.0.0.0:$port" -L "ssu://$CIPHER:$key@0.0.0.0:$port" \
-      >"$D/gost.log" 2>&1 </dev/null &
-    echo $! >"$D/gost.pid"
-    sleep 1; running || { echo "gost failed to start" >&2; cat "$D/gost.log" >&2; exit 1; }
+      >"$D/gost-$port.log" 2>&1 </dev/null &
+    echo $! >"$(pidfile "$port")"
+    sleep 1; running "$port" || { echo "gost failed to start" >&2; cat "$D/gost-$port.log" >&2; exit 1; }
+    if [ "${3:-}" = watchdog ]; then
+      gpid="$(cat "$(pidfile "$port")")"; hb="$D/hb-$port"; touch "$hb"; self="$0"
+      nohup sh -c "while sleep 30; do
+          kill -0 $gpid 2>/dev/null || exit 0
+          if [ -n \"\$(find '$hb' -mmin +3 2>/dev/null)\" ]; then SSH_ORIGINAL_COMMAND='stop $port' '$self'; exit 0; fi
+        done" >/dev/null 2>&1 </dev/null &
+    fi
     echo "started on :$port" ;;
   stop)
-    stop; termux-wake-unlock; echo stopped ;;
+    if [ -n "${2:-}" ]; then valid_port "$2"; stop_one "$2"
+    else
+      for p in $(ports); do stop_one "$p"; done
+      [ -f "$D/gost.pid" ] && { kill "$(cat "$D/gost.pid")" 2>/dev/null || true; rm -f "$D/gost.pid"; }  # pre-multi-port versions
+    fi
+    any_running || termux-wake-unlock   # keep the phone awake while any computer still uses it
+    echo stopped ;;
   status)
-    if running; then echo "running (pid $(cat "$D/gost.pid"))"; else echo stopped; exit 1; fi ;;
+    if [ -n "${2:-}" ]; then
+      valid_port "$2"
+      [ -f "$D/hb-$2" ] && touch "$D/hb-$2"   # heartbeat for the watchdog
+      if running "$2"; then echo "running on :$2 (pid $(cat "$(pidfile "$2")"))"; else echo stopped; exit 1; fi
+    else
+      out=""; for p in $(ports); do if running "$p"; then out="$out :$p"; fi; done
+      if [ -n "$out" ]; then echo "running on$out"; else echo stopped; exit 1; fi
+    fi ;;
   *)
     echo "denied" >&2; exit 1 ;;
 esac

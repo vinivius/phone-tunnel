@@ -8,8 +8,10 @@ cd "$(dirname "$0")"
 if [[ -f /etc/phone-tunnel/config && -n "${SUDO_USER:-}" ]]; then
   # shellcheck source=/dev/null
   source /etc/phone-tunnel/config
-  sudo -u "$SUDO_USER" -H env ${SSH_AUTH_SOCK:+SSH_AUTH_SOCK="$SSH_AUTH_SOCK"} PHONE_PORT="$PHONE_PORT" PHONE_USER="$PHONE_USER" ./setup-phone.sh --remove \
+  TMPPUB="$(mktemp)"; cp /etc/phone-tunnel/id_ed25519.pub "$TMPPUB"; chmod 644 "$TMPPUB"   # /etc/phone-tunnel is root-only
+  sudo -u "$SUDO_USER" -H env ${SSH_AUTH_SOCK:+SSH_AUTH_SOCK="$SSH_AUTH_SOCK"} PHONE_PORT="$PHONE_PORT" PHONE_USER="$PHONE_USER" ./setup-phone.sh --remove "$TMPPUB" \
     || echo "could not clean up the phone (not connected?); run ./setup-phone.sh --remove later"
+  rm -f "$TMPPUB"
 fi
 rm -f /etc/NetworkManager/dispatcher.d/90-phone-tunnel /etc/systemd/system/phone-tunnel.service \
       /usr/local/sbin/phone-tunnel /usr/local/bin/tun2socks
