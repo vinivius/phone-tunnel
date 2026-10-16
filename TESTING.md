@@ -124,6 +124,7 @@ All run against the real phone over the real hotspot.
 | wrong BSSID | ✅ rejected |
 | BSSID prefix (one character short) | ✅ rejected |
 | BSSID in upper case | ✅ trusted (case-insensitive, as it should be) |
+| empty `BSSID=` with a different BSSID (randomized hotspot MAC) | ✅ trusted; UUID and SSID still checked |
 
 ### Installer
 
@@ -222,3 +223,7 @@ while the tunnel is up.
     wake lock held, because the computer could no longer reach it to stop it. Now clients
     start gost with a watchdog and check in every 60 s; after 3 minutes of silence gost
     stops itself.
+14. Samsung's hotspot uses a randomized MAC by default, and it changed between sessions. The
+    BSSID check then rejected the real hotspot and the tunnel silently stopped auto-starting.
+    An empty `BSSID=` now skips that check. The profile UUID (WPA3-SAE) and the pinned SSH
+    host key still keep a fake hotspot out.

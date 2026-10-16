@@ -56,7 +56,8 @@ use the phone at the same time. See [macOS & Linux portable client](#macos--linu
 1. **NetworkManager** runs the dispatcher hook `/etc/NetworkManager/dispatcher.d/90-phone-tunnel`.
 2. `phone-tunnel nm-hook` checks that it is the **trusted hotspot**. The saved profile's
    UUID, the SSID and the BSSID must all match what was recorded at install time. If any of
-   them differs, nothing happens.
+   them differs, nothing happens. (Leave `BSSID=` empty in `/etc/phone-tunnel/config` if the
+   phone randomizes its hotspot MAC; see Troubleshooting.)
 3. It switches on the **kill switch**, an nftables table. From then on the only traffic
    allowed out of the Wi-Fi interface is to the phone's SSH and Shadowsocks ports, plus
    DHCP. Everything else is rejected, including forwarded traffic from Docker and VMs.
@@ -96,7 +97,7 @@ use the phone at the same time. See [macOS & Linux portable client](#macos--linu
 | Layer | Protects against | Can it be spoofed? |
 |---|---|---|
 | SSID match | joining some other network by accident | yes, trivially; only a first filter |
-| BSSID match | same SSID on a different access point | yes, MACs can be copied; still a filter |
+| BSSID match (optional) | same SSID on a different access point | yes, MACs can be copied; still a filter. Leave it empty if the phone randomizes its hotspot MAC |
 | **NetworkManager profile UUID** | a fake access point with your SSID and BSSID | **no, with WPA3-SAE**: SAE authenticates both sides with the password, so only the real hotspot can complete the connection with your saved profile |
 | **Pinned SSH host key** (`StrictHostKeyChecking=yes`, dedicated `known_hosts`, `HostKeyAlias`) | a fake "phone" (man-in-the-middle) | **no**: without the phone's private host key, the tunnel refuses to start |
 | **Restricted SSH key** (`restrict,command="phone-tunnel-ctl"`) | a stolen laptop key being used to get a shell on the phone | the key can only start, stop or check gost. No shell, no port forwarding, no agent; all arguments are validated |
@@ -295,6 +296,8 @@ default route.
 | Slow, but the phone itself is fast | the Wi-Fi link between laptop and phone (signal, band, power saving) is the bottleneck, not the tunnel | check `iw dev <iface> link`, move closer, use 5 GHz |
 | Some site fails over IPv6 | IPv6 is deliberately off during the session | expected; apps fall back to IPv4 |
 | NetworkManager shows "limited connectivity" | its connectivity check is bound to Wi-Fi and the kill switch rejects it | cosmetic |
+| Auto-start stopped working; `sudo phone-tunnel on` still works | the phone picked a new randomized hotspot MAC, so the BSSID no longer matches | set `BSSID=` (empty) in `/etc/phone-tunnel/config`, or set the hotspot's MAC type to "Phone MAC" and put the new BSSID there |
+| No internet as soon as the tunnel turns on; log says `port 8022: Connection refused` | sshd isn't running in Termux (Termux killed or phone rebooted); the kill switch blocks everything while the service retries | run `sshd` in Termux; set Termux's battery use to Unrestricted; Termux:Boot to start sshd after a reboot |
 
 ## License
 

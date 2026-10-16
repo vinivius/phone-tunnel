@@ -40,12 +40,13 @@ phone_ssh() {  # pinned host key + dedicated key that can only run phone-tunnel-
 }
 
 # Are we on the trusted hotspot? Saved WPA3 profile UUID + SSID + BSSID must all match.
+# BSSID= (empty) skips the BSSID check, for phones that randomize their hotspot MAC.
 on_trusted_hotspot() {
   local uuid link
   uuid="$(nmcli -t -f UUID,DEVICE connection show --active | awk -F: -v d="$IFACE" '$2==d {print $1; exit}')"
   link="$(iw dev "$IFACE" link 2>/dev/null)" || return 1
   [[ "$uuid" == "$NM_UUID" ]] || return 1
-  grep -qiF "Connected to ${BSSID} " <<<"$link" || return 1
+  [[ -z "$BSSID" ]] || grep -qiF "Connected to ${BSSID} " <<<"$link" || return 1
   grep -qxF $'\tSSID: '"$SSID" <<<"$link" || return 1
 }
 
@@ -140,7 +141,7 @@ EOF
 }
 
 cmd_on() {
-  on_trusted_hotspot || die "not on the trusted hotspot ($SSID / $BSSID / $NM_UUID), refusing"
+  on_trusted_hotspot || die "not on the trusted hotspot ($SSID / ${BSSID:-any BSSID} / $NM_UUID), refusing"
   local phone; phone="$(gateway)"
   killswitch_on "$phone"
   # gateway changed (new DHCP lease)? restart so tun2socks points at the new address

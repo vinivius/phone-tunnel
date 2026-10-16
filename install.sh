@@ -133,6 +133,8 @@ PHONE_PORT=$PHONE_PORT
 SS_PORT=$SS_PORT
 IFACE=$IFACE
 SSID='$SSID'
+# Empty BSSID= skips the BSSID check. Use it if the phone randomizes its hotspot MAC
+# (Samsung's default "Randomized MAC"), or the tunnel stops auto-starting when it changes.
 BSSID=$BSSID
 NM_UUID=$NM_UUID
 RUN_AS=$RUN_AS
