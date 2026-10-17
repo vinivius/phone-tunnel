@@ -283,6 +283,31 @@ own: `SS_PORT=8390 ./phone-tunnel.sh setup`.
 **Don't run another VPN at the same time** (Proton, WireGuard…). Both would try to own the
 default route.
 
+## Running a VPN through the tunnel
+
+A UDP VPN such as WireGuard works through the tunnel, but needs two adjustments. The first is
+built in; the second is up to you.
+
+1. **Bigger UDP socket buffers (automatic).** tun2socks doesn't size its UDP sockets, and the
+   default 208 KB buffer overflows under a VPN's packet rate and drops packets. While the tunnel
+   is up, `phone-tunnel` raises `net.core.rmem_default` / `wmem_default` to 4 MiB (it never
+   lowers them) and restores the old values when it stops.
+2. **Lower the VPN's MTU to 1360.** The Wi-Fi link to the phone carries at most 1500 bytes per
+   packet, and every relayed packet must fit including the Shadowsocks wrapper:
+
+   ```
+   VPN MTU + 32 (WireGuard header+tag) + 55 (Shadowsocks: 32 salt + 7 address + 16 tag) + 28 (IP+UDP) <= 1500
+   ```
+
+   That's at most 1385. WireGuard's default 1420 doesn't fit, so every full-size packet is
+   split into two IP fragments in both directions, and losing either half loses the packet.
+   1360 leaves room for carrier paths below 1500 (e.g. IPv4-over-IPv6 translation on the phone).
+   With NetworkManager: `nmcli connection modify <vpn> wireguard.mtu 1360`. The cost on other
+   networks is about 4% per packet.
+
+Shadowsocks can't carry bigger packets: its UDP mode has no fragmentation of its own, and
+Android's hotspot doesn't do jumbo frames. Measured results are in [TESTING.md](TESTING.md).
+
 ## Troubleshooting / lessons learned
 
 | Symptom | Cause | Fix (already in the scripts) |
@@ -296,6 +321,7 @@ default route.
 | Slow, but the phone itself is fast | the Wi-Fi link between laptop and phone (signal, band, power saving) is the bottleneck, not the tunnel | check `iw dev <iface> link`, move closer, use 5 GHz |
 | Some site fails over IPv6 | IPv6 is deliberately off during the session | expected; apps fall back to IPv4 |
 | NetworkManager shows "limited connectivity" | its connectivity check is bound to Wi-Fi and the kill switch rejects it | cosmetic |
+| A VPN (WireGuard) through the tunnel is slow and loses packets | tun2socks' UDP socket buffer overflows, and VPN packets bigger than ~1385 bytes get fragmented | buffers: built in; MTU: set the VPN's MTU to 1360 (see "Running a VPN through the tunnel") |
 | Auto-start stopped working; `sudo phone-tunnel on` still works | the phone picked a new randomized hotspot MAC, so the BSSID no longer matches | set `BSSID=` (empty) in `/etc/phone-tunnel/config`, or set the hotspot's MAC type to "Phone MAC" and put the new BSSID there |
 | No internet as soon as the tunnel turns on; log says `port 8022: Connection refused` | sshd isn't running in Termux (Termux killed or phone rebooted); the kill switch blocks everything while the service retries | run `sshd` in Termux; set Termux's battery use to Unrestricted; Termux:Boot to start sshd after a reboot |
 

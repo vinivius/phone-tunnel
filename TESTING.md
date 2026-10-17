@@ -180,6 +180,22 @@ Not tested on a real Mac: the macOS-only paths are default-gateway detection
 (`route -n get default`), `shasum` and the darwin sing-box download. The script is written
 for macOS's bash 3.2 (no associative arrays, no `mapfile`, empty-array-safe expansions).
 
+### WireGuard VPN through the tunnel
+
+A full-tunnel WireGuard VPN on the laptop, running over the phone tunnel. Same place, same
+signal (-46 dBm, 867 Mbit/s link), measured a few minutes apart.
+
+| | Default (MTU 1420, 208 KB buffers) | MTU 1360 + 4 MiB buffers |
+|---|---|---|
+| Download (5 MB) | 2.5–4.7 Mbit/s | **16.4 Mbit/s** |
+| Upload (2 MB) | 1.8 Mbit/s | **8.9 Mbit/s** (same as the tunnel alone) |
+| UDP receive-buffer drops during the test | 397 | **0** |
+| IP fragments created / reassembled during the test | ~3,300 / ~8,300 | **4 / 8** |
+| Ping loss through the VPN | 5–10% | 3% |
+
+The drops were on tun2socks' UDP socket to the phone (`ss -uam` showed `rb212992` and a
+growing `d` count). The remaining loss and jitter are on the cellular side.
+
 ## Resource cost
 
 Measured on the installed version:
@@ -227,3 +243,8 @@ while the tunnel is up.
     BSSID check then rejected the real hotspot and the tunnel silently stopped auto-starting.
     An empty `BSSID=` now skips that check. The profile UUID (WPA3-SAE) and the pinned SSH
     host key still keep a fake hotspot out.
+15. A WireGuard VPN through the tunnel ran at a few Mbit/s with 5–10% loss. tun2socks' UDP
+    socket used the 208 KB default buffer and dropped packets, and full-size WireGuard packets
+    plus the Shadowsocks wrapper exceeded 1500 bytes, so each was fragmented. `phone-tunnel`
+    now raises the default socket buffers to 4 MiB for the session; the README explains the
+    VPN MTU (1360).

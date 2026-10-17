@@ -19,6 +19,7 @@ SERVICE=phone-tunnel.service
 NFT_TABLE=phone_tunnel
 TUN=phonetun0   # not "tun0": that name is commonly taken by other VPNs (OpenVPN, Proton, ...)
 TUN_ADDR=198.18.0.1/15
+SOCK_BUF=4194304   # 4 MiB default UDP socket buffer while the tunnel is up (see cmd_run)
 CIPHER=chacha20-ietf-poly1305
 
 # shellcheck source=/dev/null
@@ -77,11 +78,12 @@ EOF
 killswitch_off() { nft delete table inet "$NFT_TABLE" 2>/dev/null && log "kill switch off" || true; }
 
 cmd_run() {
-  local phone pass t2s_pid="" v6_prev fails=0
+  local phone pass t2s_pid="" v6_prev rmem_prev wmem_prev fails=0
   phone="$(gateway)"; [[ -n "$phone" ]] || die "no default gateway on $IFACE"
   pass="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"   # per-session Shadowsocks key
   mkdir -p "$RUN_DIR"; chmod 755 "$RUN_DIR"
   v6_prev="$(sysctl -n "net.ipv6.conf.$IFACE.disable_ipv6")"
+  rmem_prev="$(sysctl -n net.core.rmem_default)"; wmem_prev="$(sysctl -n net.core.wmem_default)"
 
   cleanup() {
     set +e
@@ -89,6 +91,7 @@ cmd_run() {
     ip link del "$TUN" 2>/dev/null
     resolvectl default-route "$IFACE" true 2>/dev/null
     sysctl -q "net.ipv6.conf.$IFACE.disable_ipv6=$v6_prev"
+    sysctl -q "net.core.rmem_default=$rmem_prev" "net.core.wmem_default=$wmem_prev"
     phone_ssh "$phone" stop "$SS_PORT" 2>/dev/null
     rm -f "$RUN_DIR/tun2socks.yaml"
     log "tunnel down"
@@ -100,7 +103,11 @@ cmd_run() {
   printf '%s\n' "$pass" | phone_ssh "$phone" start "$SS_PORT" watchdog || die "phone refused start (host key / key / sshd?)"
   for _ in 1 2 3 4 5; do timeout 2 bash -c "</dev/tcp/$phone/$SS_PORT" 2>/dev/null && break; sleep 1; done
 
-  # 2. Laptop: TUN device owned by the unprivileged $RUN_AS user, which runs tun2socks
+  # 2. Laptop: TUN device owned by the unprivileged $RUN_AS user, which runs tun2socks.
+  #    tun2socks doesn't size its UDP sockets, and the 208 KB default overflows under a UDP VPN
+  #    (WireGuard) and drops packets. Raise the default for the session (never lower it).
+  sysctl -q "net.core.rmem_default=$(( rmem_prev > SOCK_BUF ? rmem_prev : SOCK_BUF ))" \
+            "net.core.wmem_default=$(( wmem_prev > SOCK_BUF ? wmem_prev : SOCK_BUF ))"
   ip link del "$TUN" 2>/dev/null || true
   ip tuntap add mode tun dev "$TUN" user "$RUN_AS"
   ip addr add "$TUN_ADDR" dev "$TUN"   # without an address systemd-resolved gives it no DNS scope
