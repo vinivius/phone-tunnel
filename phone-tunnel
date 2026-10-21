@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # phone-tunnel: route all traffic (TCP + UDP + DNS) out through an Android phone running Termux.
-#   phone:  gost Shadowsocks server (AEAD, TCP + UDP), started over a restricted SSH key
+#   phone:  sing-box Shadowsocks server (AEAD, TCP + UDP), started over a restricted SSH key
 #   laptop: tun2socks on the TUN device (unprivileged), default route + DNS via the TUN device, nftables kill switch
 #
 # Installed to /usr/local/sbin/phone-tunnel by install.sh. Must run as root.
@@ -99,7 +99,7 @@ cmd_run() {
   trap cleanup EXIT
   trap 'exit 0' INT TERM
 
-  # 1. Phone: start gost. The key goes over stdin, so it never appears in a command line.
+  # 1. Phone: start the Shadowsocks server. The key goes over stdin, so it never appears in a command line.
   printf '%s\n' "$pass" | phone_ssh "$phone" start "$SS_PORT" watchdog || die "phone refused start (host key / key / sshd?)"
   for _ in 1 2 3 4 5; do timeout 2 bash -c "</dev/tcp/$phone/$SS_PORT" 2>/dev/null && break; sleep 1; done
 
@@ -134,14 +134,14 @@ EOF
 
   # 4. Health check: exit non-zero if tun2socks or the phone end dies, so systemd restarts us.
   #    Every 60 s also check in with the phone: that's the heartbeat its watchdog waits for, and
-  #    it catches gost having been stopped or replaced while the port still answers.
+  #    it catches the server having been stopped or replaced while the port still answers.
   local n=0
   while kill -0 "$t2s_pid" 2>/dev/null; do
     sleep 15; n=$((n + 1))
     if timeout 3 bash -c "</dev/tcp/$phone/$SS_PORT" 2>/dev/null; then fails=0
     else fails=$((fails + 1)); log "phone not answering ($fails/3)"; [[ $fails -ge 3 ]] && exit 1; fi
     if (( n % 4 == 0 )) && ! phone_ssh "$phone" status "$SS_PORT" >/dev/null 2>&1; then
-      log "gost on the phone is gone"; exit 1
+      log "the Shadowsocks server on the phone is gone"; exit 1
     fi
   done
   exit 1
@@ -172,7 +172,7 @@ cmd_status() {
   echo "hotspot:     $(on_trusted_hotspot && echo "trusted ($SSID)" || echo "not trusted / not connected")"
   echo "route:       $(ip route get 1.1.1.1 2>/dev/null | head -1)"
   local phone; phone="$(gateway)"
-  [[ -n "$phone" ]] && echo "phone gost:  $(phone_ssh "$phone" status "$SS_PORT" 2>&1 || true)"
+  [[ -n "$phone" ]] && echo "phone server: $(phone_ssh "$phone" status "$SS_PORT" 2>&1 || true)"
 }
 
 case "${1:-}" in

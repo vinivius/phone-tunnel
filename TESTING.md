@@ -7,7 +7,7 @@
 | | |
 |---|---|
 | Laptop | **Ubuntu 24.04 LTS** (Linux 7.0, NetworkManager, systemd-resolved, nftables) |
-| Phone | **Samsung Galaxy Z Fold 6** (Android 16), Termux, OpenSSH, gost 2.12.0. **Not rooted.** |
+| Phone | **Samsung Galaxy Z Fold 6** (Android 16), Termux, OpenSSH, sing-box 1.14.3 (gost 2.12.0 for the earlier speed tests). **Not rooted.** |
 | Tunnel | tun2socks 2.7.0, Shadowsocks `chacha20-ietf-poly1305` (TCP + UDP) |
 | Link | laptop on the phone's Wi-Fi hotspot (WPA3-SAE, 5 GHz); phone on 5G mobile data |
 | Date | October 2026 |
@@ -196,6 +196,22 @@ signal (-46 dBm, 867 Mbit/s link), measured a few minutes apart.
 The drops were on tun2socks' UDP socket to the phone (`ss -uam` showed `rb212992` and a
 growing `d` count). The remaining loss and jitter are on the cellular side.
 
+### gost vs sing-box on the phone (WireGuard VPN through the tunnel)
+
+Same session, same place; the server on the phone was swapped back and forth with the same key.
+For reference, plain TCP through the tunnel (VPN bypassed) did 310–356 Mbit/s down and 35 up
+in the same session, so the cell link and the laptop were not the limit.
+
+| Server on the phone | VPN download (4 runs) | Median | VPN upload |
+|---|---|---:|---|
+| gost 2.12.0 | 45, 80, 86, 78 Mbit/s | 79 | 16, 29 Mbit/s |
+| **sing-box 1.14.3** | 83, 130, 106, 115 Mbit/s | **110** | 30, 28 Mbit/s |
+
+gost's log showed the VPN's UDP session torn down and rebuilt 432 times in about 10 minutes
+(several per second while downloading). Laptop side: 0 socket-buffer drops, 0 fragments.
+Both servers used about one core's worth of the phone's CPU while downloading (Android lets
+Termux use 4 of the 8 cores).
+
 ## Resource cost
 
 Measured on the installed version:
@@ -207,7 +223,7 @@ Measured on the installed version:
 | CPU | 0. The NetworkManager hook runs for a few ms per network event and exits | ~0.7 % of one core with background traffic, ~1.2 % while downloading |
 | health check | — | one TCP connection to the phone every 15 s |
 
-On the phone, the main cost is battery: gost runs, and a wake lock keeps the CPU awake
+On the phone, the main cost is battery: the Shadowsocks server runs, and a wake lock keeps the CPU awake
 while the tunnel is up.
 
 ## Bugs found during testing (all fixed)
@@ -248,3 +264,7 @@ while the tunnel is up.
     plus the Shadowsocks wrapper exceeded 1500 bytes, so each was fragmented. `phone-tunnel`
     now raises the default socket buffers to 4 MiB for the session; the README explains the
     VPN MTU (1360).
+16. gost 2.12 ended its whole UDP session whenever relaying a single packet failed, and opened a
+    new outgoing socket for the next one (432 times in ~10 minutes with a VPN running).
+    Replies on their way to the old port were lost. The phone now runs sing-box, which
+    gave ~40% more VPN download.

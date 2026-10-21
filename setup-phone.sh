@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Prepare the phone (Termux) over your existing, normal SSH access:
-#   - install gost
+#   - install sing-box (the Shadowsocks server)
 #   - install ~/bin/phone-tunnel-ctl (the only thing the tunnel key may run)
 #   - authorize the tunnel's public key, locked down with restrict,command=...
-# Usage: setup-phone.sh [--yes] PUBKEY_FILE   (install.sh calls this for you; asks before installing gost unless --yes)
+# Usage: setup-phone.sh [--yes] PUBKEY_FILE   (install.sh calls this for you; asks before installing sing-box unless --yes)
 #        setup-phone.sh --remove PUBKEY_FILE  (remove this computer's key)
 #        setup-phone.sh --remove              (remove all tunnel keys + phone-tunnel-ctl)
 # Each computer gets its own restricted key line; re-running replaces only that computer's line.
@@ -30,7 +30,8 @@ if [[ "${1:-}" == "--remove" ]]; then
     echo "phone: this computer's tunnel key removed"
   else
     "${SSH[@]}" "sed -i '/ $TAG\$/d' ~/.ssh/authorized_keys; rm -f ~/bin/phone-tunnel-ctl;
-      kill \$(cat \$PREFIX/var/phone-tunnel/gost.pid 2>/dev/null) 2>/dev/null; rm -rf \$PREFIX/var/phone-tunnel"
+      for f in \$PREFIX/var/phone-tunnel/*.pid; do [ -f \"\$f\" ] && kill \$(cat \"\$f\") 2>/dev/null; done;
+      termux-wake-unlock 2>/dev/null; rm -rf \$PREFIX/var/phone-tunnel"
     echo "phone: all tunnel keys + phone-tunnel-ctl removed"
   fi
   exit 0
@@ -39,14 +40,14 @@ fi
 PUB="${1:?usage: setup-phone.sh PUBKEY_FILE}"
 read_pub "$PUB"
 
-if ! "${SSH[@]}" 'command -v gost' >/dev/null 2>&1; then
+if ! "${SSH[@]}" 'command -v sing-box' >/dev/null 2>&1; then
   if ((!YES)); then
-    read -rp "gost is not installed on the phone. Install it now (pkg install gost)? [y/N] " a
+    read -rp "sing-box is not installed on the phone. Install it now (pkg install sing-box)? [y/N] " a
     [[ "$a" == [yY] ]] || { echo "Aborted. Nothing was changed."; exit 1; }
   fi
-  echo "phone: installing gost"
-  "${SSH[@]}" 'yes | pkg install -y gost >/dev/null 2>&1; command -v gost >/dev/null' \
-    || { echo "could not install gost (try: pkg install gost)"; exit 1; }
+  echo "phone: installing sing-box"
+  "${SSH[@]}" 'yes | pkg install -y sing-box >/dev/null 2>&1; command -v sing-box >/dev/null' \
+    || { echo "could not install sing-box (try: pkg install sing-box)"; exit 1; }
 fi
 echo "phone: installing phone-tunnel-ctl on $TARGET:$PHONE_PORT"
 "${SSH[@]}" 'mkdir -p ~/bin && cat > ~/bin/phone-tunnel-ctl && chmod 700 ~/bin/phone-tunnel-ctl' <phone/phone-tunnel-ctl

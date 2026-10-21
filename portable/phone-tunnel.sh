@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # phone-tunnel (portable): macOS + Linux client, built on sing-box. Same phone side as the
-# Linux installer: gost (Shadowsocks AEAD, TCP+UDP) in Termux, started over a restricted SSH key.
+# Linux installer: sing-box (Shadowsocks AEAD, TCP+UDP) in Termux, started over a restricted SSH key.
 #
 #   ./phone-tunnel.sh setup    one-time: tunnel key, pinned phone host key, phone side (no sudo)
 #   ./phone-tunnel.sh proxy    Docker mode: SOCKS5 + HTTP proxy on 127.0.0.1:1080 (no install)
 #   ./phone-tunnel.sh tun      native mode: whole device (TCP+UDP+DNS, IPv4+IPv6) via a TUN (sudo)
 #
-# Runs in the foreground; Ctrl-C stops it and stops gost on the phone.
+# Runs in the foreground; Ctrl-C stops it and stops the server on the phone.
 # Env: PHONE (default: your default gateway), PROXY_PORT (1080), PT_DOCKER_NET (docker --network),
 #      SS_PORT at setup (8389; give each computer its own port to use the phone at the same time)
 set -euo pipefail   # bash 3.2 compatible (macOS): no associative arrays, no mapfile
@@ -71,7 +71,7 @@ cmd_setup() {
   This will create, on this computer:
     - $CONF/  (new SSH key for the tunnel, pinned phone host key, config)
   and on the phone (Termux):
-    - gost, if not installed (asks first)
+    - sing-box, if not installed (asks first)
     - ~/bin/phone-tunnel-ctl
     - one restricted line in ~/.ssh/authorized_keys (tunnel key, can only run phone-tunnel-ctl)
 
@@ -128,7 +128,7 @@ gen_config() {
 EOF
 }
 
-# start gost on the phone with a fresh per-session key; echo the key
+# start the Shadowsocks server on the phone with a fresh per-session key; echo the key
 start_phone() {
   local key; key="$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')"
   # shellcheck source=/dev/null
@@ -139,7 +139,7 @@ start_phone() {
 
 # temp dir for the config (it contains the session key)
 RUNDIR="" HB_PID=""
-# check in with the phone every 60 s (its watchdog stops gost after 3 min of silence)
+# check in with the phone every 60 s (its watchdog stops the server after 3 min of silence)
 heartbeat() { while sleep 60; do phone_ssh status "$SS_PORT" >/dev/null 2>&1; done & HB_PID=$!; }
 cleanup() {
   set +e

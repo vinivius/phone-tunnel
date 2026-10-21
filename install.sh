@@ -75,8 +75,8 @@ NM_UUID="$(nmcli -t -f UUID,DEVICE connection show --active | awk -F: -v d="$IFA
 KEYMGMT="$(nmcli -g 802-11-wireless-security.key-mgmt connection show "$NM_UUID")"
 PHONE_USER="$(as_user ssh -n -p "$PHONE_PORT" -o ConnectTimeout=10 -o BatchMode=yes "$PHONE" whoami)" \
   || { echo "your user can't ssh to $PHONE:$PHONE_PORT without a password; set that up first (README)"; exit 1; }
-PHONE_HAS_GOST=0
-as_user ssh -n -p "$PHONE_PORT" -o BatchMode=yes "$PHONE" 'command -v gost' >/dev/null 2>&1 && PHONE_HAS_GOST=1
+PHONE_HAS_SINGBOX=0
+as_user ssh -n -p "$PHONE_PORT" -o BatchMode=yes "$PHONE" 'command -v sing-box' >/dev/null 2>&1 && PHONE_HAS_SINGBOX=1
 
 cat <<EOF
 
@@ -108,7 +108,7 @@ echo "    - /usr/local/bin/tun2socks, /usr/local/sbin/phone-tunnel"
 echo "    - /etc/systemd/system/phone-tunnel.service"
 echo "    - /etc/NetworkManager/dispatcher.d/90-phone-tunnel  (auto start/stop on this hotspot)"
 echo "  and on the phone (Termux):"
-((PHONE_HAS_GOST)) || echo "    - pkg install gost"
+((PHONE_HAS_SINGBOX)) || echo "    - pkg install sing-box"
 echo "    - ~/bin/phone-tunnel-ctl"
 echo "    - one restricted line in ~/.ssh/authorized_keys (tunnel key, can only run phone-tunnel-ctl)"
 echo "  Then the tunnel starts right away, with its kill switch on."

@@ -1,13 +1,15 @@
 #!/data/data/com.termux/files/usr/bin/sh
 # Forced command for the computers' phone-tunnel SSH keys (see authorized_keys "restrict,command=...").
 # Whatever the client asks for, this is the only thing those keys can run:
-#   start PORT [watchdog]  (Shadowsocks key read from stdin) -> start a gost instance on PORT
-#   stop [PORT]                                       -> stop that instance (no PORT: stop all)
-#   status [PORT]                                     -> is it running? (no PORT: any instance)
-# watchdog: the client must call "status PORT" at least every 3 minutes, or the instance stops
+#   start PORT [watchdog]  (Shadowsocks key read from stdin) -> start a Shadowsocks server on PORT
+#   stop [PORT]                                       -> stop that server (no PORT: stop all)
+#   status [PORT]                                     -> is it running? (no PORT: any server)
+# watchdog: the client must call "status PORT" at least every 3 minutes, or the server stops
 # itself (and releases the wake lock). Covers the computer leaving the hotspot without saying bye.
-# One gost instance per port, so several computers can use the phone at the same time
-# without stopping each other.
+# One server per port, so several computers can use the phone at the same time without
+# stopping each other.
+# The server is sing-box; gost is used only if sing-box isn't installed (older setups). gost 2.12
+# tears its UDP session down on any packet error, which made UDP (e.g. a WireGuard VPN) slow.
 set -eu
 D="$PREFIX/var/phone-tunnel"; mkdir -p "$D"
 CIPHER=chacha20-ietf-poly1305
@@ -15,10 +17,19 @@ CIPHER=chacha20-ietf-poly1305
 set -- ${SSH_ORIGINAL_COMMAND:-}
 
 valid_port() { case "$1" in ''|*[!0-9]*) echo "bad port" >&2; exit 2 ;; esac; }
-pidfile() { echo "$D/gost-$1.pid"; }
-running() { [ -f "$(pidfile "$1")" ] && kill -0 "$(cat "$(pidfile "$1")")" 2>/dev/null; }
-stop_one() { if running "$1"; then kill "$(cat "$(pidfile "$1")")" 2>/dev/null || true; fi; rm -f "$(pidfile "$1")" "$D/hb-$1"; }
-ports() { for f in "$D"/gost-*.pid; do [ -e "$f" ] || continue; f="${f##*/gost-}"; echo "${f%.pid}"; done; }
+pidfile() { echo "$D/ss-$1.pid"; }
+# pid of the server on port $1; gost-PORT.pid is what versions that only ran gost wrote
+pid_of() { for f in "$(pidfile "$1")" "$D/gost-$1.pid"; do [ -f "$f" ] && { cat "$f"; return 0; }; done; return 0; }
+running() { _pid="$(pid_of "$1")"; [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; }
+stop_one() {
+  if running "$1"; then kill "$(pid_of "$1")" 2>/dev/null || true; fi
+  rm -f "$(pidfile "$1")" "$D/gost-$1.pid" "$D/hb-$1" "$D/ss-$1.json"
+}
+ports() {
+  for f in "$D"/ss-*.pid "$D"/gost-*.pid; do
+    [ -e "$f" ] || continue; f="${f##*/}"; f="${f#ss-}"; f="${f#gost-}"; echo "${f%.pid}"
+  done | sort -u
+}
 any_running() {
   for p in $(ports); do running "$p" && return 0; done
   [ -f "$D/gost.pid" ] && kill -0 "$(cat "$D/gost.pid")" 2>/dev/null   # pre-multi-port versions
@@ -31,14 +42,27 @@ case "${1:-}" in
     case "$key" in ''|*[!0-9a-f]*) echo "bad key" >&2; exit 2 ;; esac
     stop_one "$port"
     termux-wake-lock
-    nohup gost -L "ss://$CIPHER:$key@0.0.0.0:$port" -L "ssu://$CIPHER:$key@0.0.0.0:$port" \
-      >"$D/gost-$port.log" 2>&1 </dev/null &
+    if command -v sing-box >/dev/null; then
+      # The config holds the key, so it's private (umask) and deleted once sing-box has read it.
+      cfg="$D/ss-$port.json"
+      (umask 077; cat >"$cfg" <<EOF
+{"log":{"level":"warn"},
+ "inbounds":[{"type":"shadowsocks","listen":"::","listen_port":$port,"method":"$CIPHER","password":"$key"}],
+ "outbounds":[{"type":"direct"}]}
+EOF
+      )
+      nohup sing-box run -c "$cfg" >"$D/ss-$port.log" 2>&1 </dev/null &
+    else
+      nohup gost -L "ss://$CIPHER:$key@0.0.0.0:$port" -L "ssu://$CIPHER:$key@0.0.0.0:$port" \
+        >"$D/ss-$port.log" 2>&1 </dev/null &
+    fi
     echo $! >"$(pidfile "$port")"
-    sleep 1; running "$port" || { echo "gost failed to start" >&2; cat "$D/gost-$port.log" >&2; exit 1; }
+    sleep 1; rm -f "$D/ss-$port.json"
+    running "$port" || { echo "Shadowsocks server failed to start" >&2; cat "$D/ss-$port.log" >&2; exit 1; }
     if [ "${3:-}" = watchdog ]; then
-      gpid="$(cat "$(pidfile "$port")")"; hb="$D/hb-$port"; touch "$hb"; self="$0"
+      spid="$(pid_of "$port")"; hb="$D/hb-$port"; touch "$hb"; self="$0"
       nohup sh -c "while sleep 30; do
-          kill -0 $gpid 2>/dev/null || exit 0
+          kill -0 $spid 2>/dev/null || exit 0
           if [ -n \"\$(find '$hb' -mmin +3 2>/dev/null)\" ]; then SSH_ORIGINAL_COMMAND='stop $port' '$self'; exit 0; fi
         done" >/dev/null 2>&1 </dev/null &
     fi
@@ -47,7 +71,7 @@ case "${1:-}" in
     if [ -n "${2:-}" ]; then valid_port "$2"; stop_one "$2"
     else
       for p in $(ports); do stop_one "$p"; done
-      [ -f "$D/gost.pid" ] && { kill "$(cat "$D/gost.pid")" 2>/dev/null || true; rm -f "$D/gost.pid"; }  # pre-multi-port versions
+      if [ -f "$D/gost.pid" ]; then kill "$(cat "$D/gost.pid")" 2>/dev/null || true; rm -f "$D/gost.pid"; fi  # pre-multi-port versions
     fi
     any_running || termux-wake-unlock   # keep the phone awake while any computer still uses it
     echo stopped ;;
@@ -55,7 +79,7 @@ case "${1:-}" in
     if [ -n "${2:-}" ]; then
       valid_port "$2"
       [ -f "$D/hb-$2" ] && touch "$D/hb-$2"   # heartbeat for the watchdog
-      if running "$2"; then echo "running on :$2 (pid $(cat "$(pidfile "$2")"))"; else echo stopped; exit 1; fi
+      if running "$2"; then echo "running on :$2 (pid $(pid_of "$2"))"; else echo stopped; exit 1; fi
     else
       out=""; for p in $(ports); do if running "$p"; then out="$out :$p"; fi; done
       if [ -n "$out" ]; then echo "running on$out"; else echo stopped; exit 1; fi

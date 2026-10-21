@@ -19,7 +19,7 @@ is your hotspot and your phone before sending any traffic, and if the tunnel goe
 > tethering use. **You alone are responsible for making sure that using this on your network
 > and plan is allowed.** Don't use it to break any contract, policy or law.
 
-**Tested with:** Ubuntu 24.04 LTS (laptop) + Samsung Galaxy Z Fold 6 (Android 16, Termux, gost 2.12).
+**Tested with:** Ubuntu 24.04 LTS (laptop) + Samsung Galaxy Z Fold 6 (Android 16, Termux, sing-box 1.14.3).
 
 ### Two clients, same phone side
 
@@ -32,7 +32,7 @@ is your hotspot and your phone before sending any traffic, and if the tunnel goe
 | Install | `./install.sh` (sudo) | nothing for `proxy` (just Docker) · `tun` downloads sing-box (pinned + checksummed) |
 | Engine | tun2socks | [sing-box](https://github.com/SagerNet/sing-box) |
 
-Both use the same phone side: gost (Shadowsocks AEAD) started over a restricted SSH key with
+Both use the same phone side: sing-box (Shadowsocks AEAD) started over a restricted SSH key with
 a pinned host key. Each computer gets its own key and its own port, so several computers can
 use the phone at the same time. See [macOS & Linux portable client](#macos--linux-portable-client).
 
@@ -43,7 +43,7 @@ use the phone at the same time. See [macOS & Linux portable client](#macos--linu
 ```
                  laptop                                               phone (Termux, no root)
  ┌────────────────────────────────────────────────┐                 ┌──────────────────────────┐
- │ apps ─► default route ─► phonetun0 ─► tun2socks ────┼── Shadowsocks ──┼─► gost ─► mobile data ─► internet
+ │ apps ─► default route ─► phonetun0 ─► tun2socks ────┼── Shadowsocks ──┼─► sing-box ─► mobile data ─► internet
  │                    (198.18.0.1)  (unprivileged)│  AEAD, TCP+UDP  │   (started over SSH)     │
  │ DNS (systemd-resolved) ─► phonetun0                 │    over Wi-Fi   │                          │
  │ nftables kill switch on Wi-Fi: only phone:ssh  │                 │                          │
@@ -64,7 +64,7 @@ use the phone at the same time. See [macOS & Linux portable client](#macos--linu
    Rejecting rather than silently dropping means apps fail fast instead of hanging.
 4. It starts `phone-tunnel.service`, which:
    - connects to the phone with a **dedicated, restricted SSH key**, verifies the phone's
-     **pinned host key**, and asks it to start `gost` as a **Shadowsocks** server
+     **pinned host key**, and asks it to start `sing-box` as a **Shadowsocks** server
      (`chacha20-ietf-poly1305`, TCP + UDP). The key is random for each session and is sent
      over SSH's stdin, so it never appears in a command line;
    - creates `phonetun0` and runs `tun2socks` on it **as an unprivileged system user**
@@ -76,7 +76,7 @@ use the phone at the same time. See [macOS & Linux portable client](#macos--linu
      dies, the service exits and systemd restarts it. The kill switch stays on the whole
      time, so nothing leaks while it restarts.
 5. **When you disconnect,** the hook stops the service, which puts back routes, DNS and
-   IPv6 and stops gost on the phone. It also removes the kill switch, so other Wi-Fi
+   IPv6 and stops the server on the phone. It also removes the kill switch, so other Wi-Fi
    networks work normally.
 
 ### Why Shadowsocks and not SSH, SOCKS5 or sshuttle?
@@ -86,7 +86,7 @@ use the phone at the same time. See [macOS & Linux portable client](#macos--linu
   WireGuard.
 - Plain SOCKS5 with UDP ASSOCIATE works, but it is **unencrypted** between laptop and
   phone.
-- **Shadowsocks AEAD encrypts and authenticates both TCP and UDP.** gost (phone) and
+- **Shadowsocks AEAD encrypts and authenticates both TCP and UDP.** sing-box (phone) and
   tun2socks (laptop) both support it natively. TLS-wrapped SOCKS5 wouldn't cover UDP,
   and tun2socks can't speak it anyway.
 
@@ -100,7 +100,7 @@ use the phone at the same time. See [macOS & Linux portable client](#macos--linu
 | BSSID match (optional) | same SSID on a different access point | yes, MACs can be copied; still a filter. Leave it empty if the phone randomizes its hotspot MAC |
 | **NetworkManager profile UUID** | a fake access point with your SSID and BSSID | **no, with WPA3-SAE**: SAE authenticates both sides with the password, so only the real hotspot can complete the connection with your saved profile |
 | **Pinned SSH host key** (`StrictHostKeyChecking=yes`, dedicated `known_hosts`, `HostKeyAlias`) | a fake "phone" (man-in-the-middle) | **no**: without the phone's private host key, the tunnel refuses to start |
-| **Restricted SSH key** (`restrict,command="phone-tunnel-ctl"`) | a stolen laptop key being used to get a shell on the phone | the key can only start, stop or check gost. No shell, no port forwarding, no agent; all arguments are validated |
+| **Restricted SSH key** (`restrict,command="phone-tunnel-ctl"`) | a stolen laptop key being used to get a shell on the phone | the key can only start, stop or check the Shadowsocks server. No shell, no port forwarding, no agent; all arguments are validated |
 | **Shadowsocks AEAD** (per-session random key) | others on the hotspot reading or injecting tunnel traffic | encrypted and authenticated TCP + UDP |
 | **Kill switch** (nftables) | leaks while the tunnel is starting, restarting or broken | only the phone's ssh + Shadowsocks ports (and DHCP) may leave the Wi-Fi interface |
 | Unprivileged `tun2socks` (`phonetun` user) | a bug in the packet-processing code becoming root | it only gets the `phonetun0` it owns |
@@ -118,7 +118,7 @@ that the tunnel key really is restricted. It warns if the hotspot isn't WPA3.
   missing, including [`tun2socks`](https://github.com/xjasonlyu/tun2socks), is installed by
   `install.sh` (apt-based distros; on others, install the tools listed in `install.sh` yourself).
 - **Phone:** Termux (preferably from F-Droid) with `openssh` running. That has to be set up
-  by hand, since it's how the installer reaches the phone. The installer adds `gost` itself.
+  by hand, since it's how the installer reaches the phone. The installer adds `sing-box` itself.
 - **Hotspot:** set it to **WPA3** if your phone allows; on Samsung that's
   *Mobile Hotspot → Configure → Security → WPA3-Personal*.
 
@@ -166,7 +166,7 @@ The installer will:
 4. **Install the laptop side.** It creates the `phonetun` system user, generates the
    dedicated SSH key in `/etc/phone-tunnel/`, and installs `phone-tunnel`, the systemd
    unit and the dispatcher hook.
-5. **Set up the phone over your normal SSH.** It installs gost and `phone-tunnel-ctl`,
+5. **Set up the phone over your normal SSH.** It installs sing-box and `phone-tunnel-ctl`,
    and authorizes the new key as restricted.
 6. **Verify and start.** It checks that the key works and really is restricted, then
    starts the tunnel.
@@ -205,8 +205,8 @@ to pin the phone's address instead of using the gateway.
 
 ## Test results
 
-Tested on **Ubuntu 24.04 LTS** + **Samsung Galaxy Z Fold 6** (Android 16, Termux, gost 2.12.0,
-tun2socks 2.7.0). Medians, two alternating rounds:
+Tested on **Ubuntu 24.04 LTS** + **Samsung Galaxy Z Fold 6** (Android 16, Termux, gost 2.12.0 on
+the phone at the time, tun2socks 2.7.0). Medians, two alternating rounds:
 
 | Path | Download | Upload | TLS RTT | UDP DNS loss |
 |---|---:|---:|---:|---:|
@@ -239,14 +239,14 @@ cd portable
 - creates a tunnel key in `~/.config/phone-tunnel/`;
 - pins the phone's host key, checking the scanned key against what the phone reports about
   itself over your normal SSH, and aborts on mismatch;
-- installs gost and `phone-tunnel-ctl` on the phone and authorizes the key as restricted;
+- installs sing-box and `phone-tunnel-ctl` on the phone and authorizes the key as restricted;
 - checks that the key really is restricted.
 
 It uses Shadowsocks port **8389**; the Linux installer uses 8388. Give each extra computer its
 own: `SS_PORT=8390 ./phone-tunnel.sh setup`.
 
 **`proxy`, Docker mode: nothing to install except Docker.**
-- Starts gost on the phone with a fresh per-session key.
+- Starts the Shadowsocks server on the phone with a fresh per-session key.
 - Runs the **official sing-box image**, pinned by digest, with a SOCKS5 + HTTP proxy on
   `127.0.0.1:1080`. It's only reachable from the computer itself, never from the LAN.
 - Set it as your **system proxy**:
@@ -271,9 +271,9 @@ own: `SS_PORT=8390 ./phone-tunnel.sh setup`.
 - Every generated config is checked with `sing-box check` before it runs.
 
 **Both modes:**
-- Ctrl-C stops everything, including gost on the phone.
+- Ctrl-C stops everything, including the server on the phone.
 - A heartbeat every 60 s keeps the phone side alive. If the computer vanishes, for example
-  by walking out of hotspot range, gost on the phone stops itself after 3 minutes.
+  by walking out of hotspot range, the server on the phone stops itself after 3 minutes.
 
 **Limits compared with the Linux installer:**
 - it doesn't start automatically;
@@ -285,7 +285,7 @@ default route.
 
 ## Running a VPN through the tunnel
 
-A UDP VPN such as WireGuard works through the tunnel, but needs two adjustments. The first is
+A UDP VPN such as WireGuard works through the tunnel, and three things matter. The first and third are
 built in; the second is up to you.
 
 1. **Bigger UDP socket buffers (automatic).** tun2socks doesn't size its UDP sockets, and the
@@ -304,6 +304,12 @@ built in; the second is up to you.
    1360 leaves room for carrier paths below 1500 (e.g. IPv4-over-IPv6 translation on the phone).
    With NetworkManager: `nmcli connection modify <vpn> wireguard.mtu 1360`. The cost on other
    networks is about 4% per packet.
+
+3. **The phone runs sing-box, not gost.** gost 2.12 ends its whole UDP session on any error
+   with a single packet and opens a new socket on a new port, which happened several times a
+   second under load. Packets already on their way to the old port were lost, and the VPN's
+   TCP slowed down. sing-box keeps the session. (`phone-tunnel-ctl` still falls back to gost if
+   sing-box isn't installed.)
 
 Shadowsocks can't carry bigger packets: its UDP mode has no fragmentation of its own, and
 Android's hotspot doesn't do jumbo frames. Measured results are in [TESTING.md](TESTING.md).
